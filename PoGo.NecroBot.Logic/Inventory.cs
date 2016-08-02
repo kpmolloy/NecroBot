@@ -84,7 +84,7 @@ namespace PoGo.NecroBot.Logic
 
         public async Task<IEnumerable<PokemonData>> GetDuplicatePokemonToTransfer(
             bool keepPokemonsThatCanEvolve = false, bool prioritizeIVoverCp = false,
-            IEnumerable<PokemonId> filter = null, IEnumerable<PokemonId> evolultionFilter = null)
+            IEnumerable<PokemonId> filter = null)
         {
             var myPokemon = await GetPokemons();
 
@@ -101,9 +101,6 @@ namespace PoGo.NecroBot.Logic
             if (filter != null)
                 pokemonFiltered = pokemonFiltered.Where(p => !filter.Contains(p.PokemonId));
 
-            if (evolultionFilter != null && keepPokemonsThatCanEvolve)
-                pokemonFiltered = pokemonFiltered.Where(p => !evolultionFilter.Contains(p.PokemonId));
-
             var pokemonList = pokemonFiltered.ToList();
 
             var results = new List<PokemonData>();
@@ -117,9 +114,7 @@ namespace PoGo.NecroBot.Logic
 
             foreach (var pokemon in pokemonsThatCanBeTransfered)
             {
-                var settings = pokemonSettings.Single(x => x.PokemonId == pokemon.Key);
                 var amountToSkip = GetPokemonTransferFilter(pokemon.Key).KeepMinDuplicatePokemon;
-                var familyCandy = pokemonFamilies.Single(x => settings.FamilyId == x.FamilyId);
 
                 var transferrablePokemonTypeCount = pokemonFiltered.Where(p => p.PokemonId == pokemon.Key).Count();
                 var currentPokemonTypeCount = myPokemon.Where(p => p.PokemonId == pokemon.Key).Count();
@@ -137,14 +132,20 @@ namespace PoGo.NecroBot.Logic
                 // Fail safe
                 if (amountToSkip < 0) amountToSkip = 0;
 
-                // Check if we want to evolve this type of Pokemon before we transfer it
-                if (settings.EvolutionIds.Count != 0 && settings.CandyToEvolve > 0 && _logicSettings.PokemonsToEvolve.Contains(pokemon.Key))
+                var settings = pokemonSettings.Single(x => x.PokemonId == pokemon.Key);
+                var familyCandy = pokemonFamilies.Single(x => settings.FamilyId == x.FamilyId);
+
+                // Check if we want to evolve this type of Pokemon before we transfer it, and if we have enough candy, and this pokemon can evolve
+                if (keepPokemonsThatCanEvolve && 
+                    _logicSettings.PokemonsToEvolve.Contains(pokemon.Key) && 
+                    settings.CandyToEvolve > 0 && 
+                    settings.EvolutionIds.Count != 0)
                 {
                     var amountPossible = (familyCandy.Candy_ - 1) / (settings.CandyToEvolve - 1);
                     if (amountPossible > amountToSkip)
-                        amountToSkip = amountPossible+1;
+                        amountToSkip = amountPossible + 1;
                 }
-
+                
                 if (prioritizeIVoverCp)
                 {
                     results.AddRange(pokemonList.Where(x => x.PokemonId == pokemon.Key)
@@ -400,7 +401,7 @@ namespace PoGo.NecroBot.Logic
 
             var myPokemon = await GetPokemons();
             myPokemon = myPokemon.Where(p => p.DeployedFortId == string.Empty);
-
+            
             IEnumerable<PokemonData> highestPokemonForUpgrade = (_logicSettings.UpgradePokemonMinimumStatsOperator.ToLower().Equals("and")) ?
                 myPokemon.Where(
                         p => (p.Cp >= _logicSettings.UpgradePokemonCpMinimum &&
@@ -408,14 +409,11 @@ namespace PoGo.NecroBot.Logic
                 myPokemon.Where(
                     p => (p.Cp >= _logicSettings.UpgradePokemonCpMinimum ||
                         PokemonInfo.CalculatePokemonPerfection(p) >= _logicSettings.UpgradePokemonIvMinimum)).OrderByDescending(p => p.Cp).ToList();
-            /**
-             * @todo make sure theres enough candy (see line 109)
-             * @todo make sure max cp hasnt been reached
-             * @todo remove _logicSettings.AmountOfTimesToUpgradeLoop and use it as a count limitation in levelup loop for successes  instead
-             * */
+
             return upgradePokemon = (_logicSettings.LevelUpByCPorIv.ToLower().Equals("iv")) ?
-                    highestPokemonForUpgrade.OrderByDescending(PokemonInfo.CalculatePokemonPerfection).Take(_logicSettings.AmountOfTimesToUpgradeLoop).ToList() :
-                    highestPokemonForUpgrade.Take(_logicSettings.AmountOfTimesToUpgradeLoop).ToList();
+                    highestPokemonForUpgrade.Where(p => (p.Cp < PokemonInfo.CalculateMaxCp(p)))
+                        .OrderByDescending(PokemonInfo.CalculatePokemonPerfection).ToList() :
+                    highestPokemonForUpgrade.Where(p => (p.Cp < PokemonInfo.CalculateMaxCp(p))).ToList();
         }
 
         public TransferFilter GetPokemonTransferFilter(PokemonId pokemon)
